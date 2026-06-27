@@ -957,8 +957,38 @@
     </div>
   </div>
 
+  <!-- ===== LOGIN SCREEN ===== -->
+  <section id="screen-login">
+    <div class="card" style="max-width:440px;margin:0 auto;">
+      <h2>Accesso profilo</h2>
+      <p style="font-size:13px;color:var(--ink-soft,#555);margin-top:-4px;line-height:1.5;">
+        Inserisci le tue credenziali per accedere alle <strong>tue statistiche personali</strong>.
+        Ogni profilo tiene traccia separatamente di domande viste, errori e andamento.
+      </p>
+      <div class="setup-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+        <label for="login-username" style="min-width:auto;font-weight:700;">Username</label>
+        <input type="text" id="login-username" autocomplete="username" autocapitalize="none"
+               autocorrect="off" spellcheck="false" placeholder="es. giuseppe">
+      </div>
+      <div class="setup-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+        <label for="login-password" style="min-width:auto;font-weight:700;">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" placeholder="••••••">
+      </div>
+      <div id="login-error" style="display:none;color:#c8102e;font-size:13px;font-weight:600;margin-top:4px;">
+        Username o password non corretti.
+      </div>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn btn-primary" id="login-btn">Accedi</button>
+      </div>
+    </div>
+  </section>
+
   <!-- ===== SETUP SCREEN ===== -->
-  <section id="screen-setup">
+  <section id="screen-setup" style="display:none;">
+    <div class="profile-bar" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;margin-bottom:14px;border:1.5px solid var(--ink,#1a1a1a);background:#fff;border-radius:3px;flex-wrap:wrap;">
+      <span style="font-size:13px;">👤 Profilo attivo: <strong id="current-profile-name">—</strong></span>
+      <button class="btn btn-secondary" id="logout-btn" style="font-size:11px;padding:6px 10px;letter-spacing:0.05em;">⇄ Cambia profilo</button>
+    </div>
     <div class="card">
       <h2>Impostazioni sessione</h2>
       <div class="setup-row">
@@ -1237,6 +1267,74 @@
   const SCORE_SKIPPED = 0;    // nessuna penalità per risposta non data
   const SECONDS_PER_QUESTION = 60;   // 1 minuto per domanda
 
+  // ---------- Profili utente (selettore locale) ----------
+  // NB: NON è un sistema di sicurezza reale. Le credenziali sono nel codice
+  // (repo pubblico) e servono solo a SEPARARE le statistiche di più persone
+  // sullo stesso browser. Tutto resta lato client.
+  const CREDENTIALS = {
+    'giuseppe': 'fumai',
+    'mario': '1234',
+    'annadora': 'penta',
+  };
+  const PROFILE_SESSION_KEY = 'asl_bari_quiz_active_profile';
+  let CURRENT_PROFILE = null;
+
+  function profileKey(suffix) {
+    return 'asl_bari_quiz_p_' + CURRENT_PROFILE + '_' + suffix;
+  }
+  function applyProfile(name) {
+    CURRENT_PROFILE = name;
+    STORAGE_KEY      = profileKey('seen_ids_v1');
+    STATS_KEY        = profileKey('stats_v1');
+    TOPIC_STATS_KEY  = profileKey('topic_stats_v1');
+    ERRORS_KEY       = profileKey('errors_v1');
+    RECENT_QUEUE_KEY = profileKey('recent_queue_v1');
+  }
+  function prettyName(name) {
+    return name ? name.charAt(0).toUpperCase() + name.slice(1) : '';
+  }
+  function initProfileData() {
+    // Render che dipendono dal profilo: girano DOPO il login, quando le chiavi
+    // localStorage sono impostate sul profilo corretto.
+    safe(updateCoverageInfo);
+    safe(updateAccuracyInfo);
+    safe(updateAllTopicsBreakdown);
+    safe(updateReviewErrorsButton);
+  }
+  function enterApp(name) {
+    applyProfile(name);
+    try { sessionStorage.setItem(PROFILE_SESSION_KEY, name); } catch (e) {}
+    var nameEl = document.getElementById('current-profile-name');
+    if (nameEl) nameEl.textContent = prettyName(name);
+    initProfileData();
+    showScreen('setup');
+  }
+  function doLogin() {
+    var u = (document.getElementById('login-username').value || '').trim().toLowerCase();
+    var p = (document.getElementById('login-password').value || '').trim();
+    var errEl = document.getElementById('login-error');
+    if (Object.prototype.hasOwnProperty.call(CREDENTIALS, u) && CREDENTIALS[u] === p) {
+      if (errEl) errEl.style.display = 'none';
+      enterApp(u);
+    } else {
+      if (errEl) errEl.style.display = 'block';
+      var pw = document.getElementById('login-password');
+      if (pw) { pw.value = ''; pw.focus(); }
+    }
+  }
+  function logout() {
+    try { sessionStorage.removeItem(PROFILE_SESSION_KEY); } catch (e) {}
+    CURRENT_PROFILE = null;
+    if (session) { stopTimer(); session = null; }
+    var p = document.getElementById('login-password');
+    var err = document.getElementById('login-error');
+    if (p) p.value = '';
+    if (err) err.style.display = 'none';
+    showScreen('login');
+    var u = document.getElementById('login-username');
+    if (u) u.focus();
+  }
+
   // ---------- State ----------
   let session = null;
   let timer = null;          // setInterval handle
@@ -1380,7 +1478,7 @@
   }
 
   // ---------- Cooldown ID delle domande recenti (per modalità random) ----------
-  const RECENT_QUEUE_KEY = 'asl_bari_quiz_recent_queue_v1';
+  let RECENT_QUEUE_KEY = '';   // ricalcolata per profilo in applyProfile()
   // Finestra di cooldown ~15% del pool (le ultime ~450 viste in random)
   function getCooldownSize() {
     return Math.floor(QUIZ_BANK.length * 0.15);
@@ -1435,6 +1533,7 @@
   // ---------- DOM ----------
   const $ = id => document.getElementById(id);
   const screens = {
+    login: $('screen-login'),
     setup: $('screen-setup'),
     session: $('screen-session'),
     results: $('screen-results'),
@@ -1520,8 +1619,8 @@
   // Salva nel localStorage gli ID delle domande già mostrate.
   // Quando si pesca un nuovo test, si privilegiano le domande NON ancora viste.
   // Se le viste coprono già tutto il pool richiesto, si resetta automaticamente.
-  const STORAGE_KEY = 'asl_bari_quiz_seen_ids_v1';
-  const STATS_KEY = 'asl_bari_quiz_stats_v1';
+  let STORAGE_KEY = '';        // ricalcolata per profilo
+  let STATS_KEY = '';          // ricalcolata per profilo
 
   function loadSeenSet() {
     try {
@@ -1593,7 +1692,7 @@
   // Aggrega risposte per macro-argomento, persistente nel localStorage.
   // { "Cardiologia": { total: 12, correct: 9 }, ... }
   // Si azzera insieme alle altre statistiche.
-  const TOPIC_STATS_KEY = 'asl_bari_quiz_topic_stats_v1';
+  let TOPIC_STATS_KEY = '';    // ricalcolata per profilo
   function loadTopicStats() {
     try {
       const raw = localStorage.getItem(TOPIC_STATS_KEY);
@@ -1646,7 +1745,7 @@
   // Mantiene un set di ID di domande che l'utente ha sbagliato o saltato.
   // Quando l'utente risponde correttamente la stessa domanda in seguito,
   // l'ID viene rimosso. È persistente nel localStorage.
-  const ERRORS_KEY = 'asl_bari_quiz_errors_v1';
+  let ERRORS_KEY = '';         // ricalcolata per profilo
   function loadErrorSet() {
     try {
       const raw = localStorage.getItem(ERRORS_KEY);
@@ -2252,20 +2351,45 @@ Fornisci una spiegazione concisa (max 3 frasi, italiano), spiegando il razionale
   // non deve impedire l'aggancio dei listener dei pulsanti (es. "Inizia").
   function safe(fn) { try { fn(); } catch (e) { /* non bloccare l'init */ } }
 
-  // Update time-info live as user changes question count
+  // Render INDIPENDENTI dal profilo: possono girare subito al caricamento.
   safe(function () {
     ['input', 'change'].forEach(function (ev) {
       var el = document.getElementById('num-questions');
       if (el) el.addEventListener(ev, updateTimeInfo);
     });
   });
-  safe(updateTimeInfo);            // initial render
-  safe(updateCoverageInfo);        // initial render del contatore varietà
-  safe(updateAccuracyInfo);        // initial render dell'andamento complessivo
-  safe(updateAllTopicsBreakdown);  // initial render della breakdown
-  safe(updateAiCacheInfo);         // initial render delle spiegazioni AI in cache
-  safe(updateReviewErrorsButton);  // initial render del pulsante Ripassa errori
-  safe(setupAiButtonsDelegation);  // attiva delegation per i pulsanti AI
+  safe(updateTimeInfo);            // tempo stimato (non dipende dal profilo)
+  safe(updateAiCacheInfo);         // cache spiegazioni AI (condivisa tra profili)
+  safe(setupAiButtonsDelegation);  // delegation pulsanti AI
+  // I render che dipendono dal profilo (copertura, andamento, breakdown,
+  // ripassa errori) girano in initProfileData(), DOPO il login.
+
+  // ---------- Login / logout wiring ----------
+  safe(function () {
+    var lb = document.getElementById('login-btn');
+    if (lb) lb.addEventListener('click', doLogin);
+    var lo = document.getElementById('logout-btn');
+    if (lo) lo.addEventListener('click', logout);
+    ['login-username', 'login-password'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); doLogin(); }
+      });
+    });
+  });
+
+  // ---------- Bootstrap: rientra nel profilo attivo o mostra il login ----------
+  safe(function () {
+    var active = null;
+    try { active = sessionStorage.getItem(PROFILE_SESSION_KEY); } catch (e) {}
+    if (active && Object.prototype.hasOwnProperty.call(CREDENTIALS, active)) {
+      enterApp(active);             // sessione ancora valida: rientra diretto
+    } else {
+      showScreen('login');          // altrimenti chiedi le credenziali
+      var u = document.getElementById('login-username');
+      if (u) u.focus();
+    }
+  });
 
   // Pulsante "Carica modello AI"
   $('ai-init-btn').addEventListener('click', async () => {
